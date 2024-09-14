@@ -29,13 +29,34 @@ struct buddy2 {
   int8_t bits[0];
 };
 
-struct buddy2* buddy2_new( int size );
+static inline unsigned fixsize(int32_t size) {      //?
+  if (size <= 0) return 1;
+  if (IS_POWER_OF_2(size))
+		return size;
+  size |= size >> 1;
+  size |= size >> 2;
+  size |= size >> 4;
+  size |= size >> 8;
+  size |= size >> 16;
+  return size+1;
+}
+
+static inline int8_t u32log2(unsigned int n) {
+    int8_t log = 0;
+    if (n >> 16) { n >>= 16; log += 16; }
+    if (n >> 8)  { n >>= 8;  log += 8; }
+    if (n >> 4)  { n >>= 4;  log += 4; }
+    if (n >> 2)  { n >>= 2;  log += 2; }
+    if (n >> 1)  { log += 1; }
+    return log;
+}
+
+struct buddy2* buddy2_new( int size, int max_size);
 void buddy2_destroy( struct buddy2* self );
 
 uint32_t buddy2_alloc(struct buddy2* self, int size);
 void buddy2_free(struct buddy2* self, int offset);
 
-int buddy2_size(struct buddy2* self, int offset);
 void buddy2_dump(struct buddy2* self);
 
 #endif//__BUDDY2_H__

@@ -3,39 +3,17 @@
 #include <stdio.h>
 #include "buddy2.h"
 
-static inline unsigned fixsize(int32_t size) {
-  if (size <= 0) return 1;
-  if (IS_POWER_OF_2(size))
-		return size;
-  size |= size >> 1;
-  size |= size >> 2;
-  size |= size >> 4;
-  size |= size >> 8;
-  size |= size >> 16;
-  return size+1;
-}
-
-static inline int8_t cblog2(unsigned int n) {
-    int8_t log = 0;
-    if (n >> 16) { n >>= 16; log += 16; }
-    if (n >> 8)  { n >>= 8;  log += 8; }
-    if (n >> 4)  { n >>= 4;  log += 4; }
-    if (n >> 2)  { n >>= 2;  log += 2; }
-    if (n >> 1)  { log += 1; }
-    return log;
-}
-
-struct buddy2* buddy2_new( int size ) {
+struct buddy2* buddy2_new(int size, int alloc_max_size) {
   struct buddy2* self;
   uint8_t level;
 
-  if (size < 1 || !IS_POWER_OF_2(size))
+  if (size < 1 || !IS_POWER_OF_2(size) || alloc_max_size < 1 || size < alloc_max_size)
     return NULL;
 
   self = (struct buddy2*)malloc(sizeof(struct buddy2) + (2 * size - 1) * sizeof(uint8_t));
-  self->level = cblog2(size);
+  self->level = u32log2(size);
   self->node_size = size;
-  self->max_level = 8;              //256  page 4K, size 1M
+  self->max_level = u32log2(fixsize(alloc_max_size));              //256  page 4K, size 1M
   level = self->level;
 
   for (int i = 0; i < 2 * size - 1; ++i) {
@@ -56,7 +34,7 @@ uint32_t buddy2_alloc(struct buddy2* self, int size) {
   int8_t  level = 0;
 
   size = fixsize(size);
-  level = cblog2(size);
+  level = u32log2(size);
 
   if (self==NULL || self->max_level < level)
     return INVALID_BUDDY_FLAG;
@@ -72,7 +50,7 @@ uint32_t buddy2_alloc(struct buddy2* self, int size) {
   }
 
   info._info.level  = level;
-  info._info.offset = (index + 1) * (1 << level) - self->node_size;
+  info._info.offset = (index + 1) * (1 << level) - self->node_size;             //index1=size/level - 1   index2=off/level   index=index1+index2
   self->bits[index]  = -1;
 
   while (index) {
@@ -91,7 +69,7 @@ void buddy2_free(struct buddy2* self, int offset) {
   assert(self && offset >= 0 && offset < self->node_size);
 
   level = 0;
-  index = offset + self->node_size - 1;
+  index = offset + self->node_size - 1;       //cal leaf node   index1=size -1 index2=off  index=index1+index2
   self->bits[index] = level;
 
   while (index) {
@@ -99,8 +77,8 @@ void buddy2_free(struct buddy2* self, int offset) {
     left_level  = self->bits[LEFT_LEAF(index)];
     right_level = self->bits[RIGHT_LEAF(index)];
 
-    if (left_level == right_level && left_level == level)
-      self->bits[index] = ++left_level;
+    if (left_level == level && right_level == level)
+      self->bits[index] = left_level + 1;
     else
       self->bits[index] = MAX(left_level, right_level);
 
@@ -111,15 +89,22 @@ void buddy2_free(struct buddy2* self, int offset) {
 void buddy2_dump(struct buddy2* self) {
   int level = 0;
   int count = 0;
+  int balck_count = 1 << (self->level - level - 1);
 
   for (int i = 0; i < 2 * self->node_size - 1; ++i) {
     if (IS_POWER_OF_2(i+1) && i != 0) {
-      printf("\t\t\tlevel:%d\t count:%d\t\t\n", level, count);
+      printf("\t\t\tlevel:%d\t count:%d\t black_count:%d\n", level, count, balck_count);
       level++;
       count = 0;
+      balck_count = (1 << (self->level - level - 1));
     }
     count++;
-    printf("%2d", self->bits[i]);
+    for (int j = 0; j < balck_count; j++)
+      printf("  ");
+    if (self->bits[i] >= 0)
+      printf("%2d", self->bits[i]);
+    else
+      printf("%d", self->bits[i]);
   }
   printf("\t\t\tlevel:%d\t count:%d\t\t\n", level, count);
 }
@@ -131,7 +116,7 @@ void buddy2_dump(struct buddy2* self) {
 
 //   index = offset + self->node_size - 1;
 //   //是否需要
-//   node_size = 1 << (self->max_level - cblog2(index));
+//   node_size = 1 << (self->max_level - u32log2(index));
 
 //   // node_size = 1;
 //   // for (index = offset + self->size - 1; self->bits[index] ; index = PARENT(index))
